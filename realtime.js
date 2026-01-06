@@ -1,4 +1,4 @@
-// Real-time update system for automatic updates
+// Real-time update system using GitHub Gist
 class RealtimeSystem {
     constructor() {
         this.lastUpdateTime = null;
@@ -6,6 +6,8 @@ class RealtimeSystem {
         this.updateCount = 0;
         this.isConnected = false;
         this.dataVersion = null;
+        this.retryCount = 0;
+        this.maxRetries = 3;
     }
     
     async init() {
@@ -28,15 +30,11 @@ class RealtimeSystem {
     
     async loadSharedData() {
         try {
-            const response = await fetch(CONFIG.DATA_URL, {
-                headers: {
-                    'X-Master-Key': CONFIG.API_KEY
-                }
-            });
+            // Try to load from Gist
+            const response = await fetch(CONFIG.GIST_RAW_URL + '?t=' + Date.now());
             
             if (response.ok) {
-                const data = await response.json();
-                const sharedData = data.record;
+                const sharedData = await response.json();
                 
                 if (sharedData && sharedData.timestamp) {
                     this.lastUpdateTime = sharedData.timestamp;
@@ -48,14 +46,37 @@ class RealtimeSystem {
                     // Update UI
                     this.updateUI(sharedData);
                     
-                    console.log('Shared data loaded successfully');
+                    console.log('✅ Shared data loaded successfully from Gist');
+                    this.retryCount = 0;
                     return true;
                 }
             }
         } catch (error) {
-            console.log('Failed to load shared data:', error);
+            console.log('⚠️ Failed to load shared data from Gist:', error);
+            
+            // Load from local storage as fallback
+            return this.loadFromLocalStorage();
         }
         return false;
+    }
+    
+    loadFromLocalStorage() {
+        try {
+            const localData = {
+                announcements: JSON.parse(localStorage.getItem('veerapura_announcements') || '[]'),
+                prices: JSON.parse(localStorage.getItem('veerapura_prices') || '[]'),
+                services: JSON.parse(localStorage.getItem('veerapura_services') || '[]'),
+                jobs: JSON.parse(localStorage.getItem('veerapura_jobs') || '[]'),
+                emergency: JSON.parse(localStorage.getItem('veerapura_emergency') || '[]')
+            };
+            
+            this.updateUI(localData);
+            console.log('📂 Loaded data from local storage');
+            return true;
+        } catch (error) {
+            console.error('Failed to load from local storage:', error);
+            return false;
+        }
     }
     
     startUpdateChecking() {
@@ -76,16 +97,16 @@ class RealtimeSystem {
     }
     
     async checkForUpdates() {
+        if (this.retryCount >= this.maxRetries) {
+            console.log('Max retries reached, pausing updates');
+            return;
+        }
+        
         try {
-            const response = await fetch(CONFIG.DATA_URL + '?t=' + Date.now(), {
-                headers: {
-                    'X-Master-Key': CONFIG.API_KEY
-                }
-            });
+            const response = await fetch(CONFIG.GIST_RAW_URL + '?t=' + Date.now());
             
             if (response.ok) {
-                const data = await response.json();
-                const sharedData = data.record;
+                const sharedData = await response.json();
                 
                 if (sharedData && sharedData.timestamp) {
                     if (this.lastUpdateTime !== sharedData.timestamp) {
@@ -110,11 +131,15 @@ class RealtimeSystem {
                 
                 this.isConnected = true;
                 this.updateConnectionStatus(true);
+                this.retryCount = 0;
+            } else {
+                throw new Error('Failed to fetch');
             }
         } catch (error) {
             console.log('Update check failed:', error);
             this.isConnected = false;
             this.updateConnectionStatus(false);
+            this.retryCount++;
         }
     }
     
@@ -276,6 +301,11 @@ class RealtimeSystem {
     }
     
     showUpdateNotification() {
+        // Check if notification already exists
+        if (document.querySelector('.realtime-notification')) {
+            return;
+        }
+        
         const notification = document.createElement('div');
         notification.className = 'realtime-notification';
         notification.innerHTML = `
@@ -351,58 +381,148 @@ class RealtimeSystem {
         }
     }
     
-    // Method to push updates to shared storage (for admin)
+    // Method to push updates to GitHub Gist (for admin)
     async pushUpdate(collection, data) {
         try {
-            // First get current data
-            const response = await fetch(CONFIG.DATA_URL, {
-                headers: {
-                    'X-Master-Key': CONFIG.API_KEY
+            // First get current data from Gist
+            let sharedData;
+            try {
+                const response = await fetch(CONFIG.GIST_RAW_URL);
+                if (response.ok) {
+                    sharedData = await response.json();
+                } else {
+                    // Create new data structure if Gist doesn't exist
+                    sharedData = {
+                        timestamp: new Date().toISOString(),
+                        version: "1.0",
+                        announcements: [],
+                        prices: [],
+                        services: [],
+                        jobs: [],
+                        emergency: []
+                    };
                 }
+            } catch (error) {
+                // Create new data structure
+                sharedData = {
+                    timestamp: new Date().toISOString(),
+                    version: "1.0",
+                    announcements: [],
+                    prices: [],
+                    services: [],
+                    jobs: [],
+                    emergency: []
+                };
+            }
+            
+            // Initialize collection if not exists
+            if (!sharedData[collection]) {
+                sharedData[collection] = [];
+            }
+            
+            // Add timestamp and ID to data
+            data.timestamp = Date.now();
+            data.id = Date.now();
+            
+            // Add to collection
+            sharedData[collection].unshift(data);
+            
+            // Keep only last 20 items
+            sharedData[collection] = sharedData[collection].slice(0, 20);
+            
+            // Update timestamp and version
+            sharedData.timestamp = new Date().toISOString();
+            sharedData.version = (parseFloat(sharedData.version) || 1.0) + 0.1;
+            
+            // Save to GitHub Gist
+            const saveResponse = await fetch(CONFIG.GIST_API_URL, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `token ${CONFIG.GITHUB_TOKEN}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: 'Veerapura Village Data - Updated ' + new Date().toLocaleString(),
+                    files: {
+                        [CONFIG.GIST_FILENAME]: {
+                            content: JSON.stringify(sharedData, null, 2)
+                        }
+                    }
+                })
             });
             
-            if (response.ok) {
-                const currentData = await response.json();
-                let sharedData = currentData.record || {};
+            if (saveResponse.ok) {
+                console.log('✅ Update pushed successfully to Gist');
+                return true;
+            } else {
+                const errorData = await saveResponse.json();
+                console.error('Gist update failed:', errorData);
                 
-                // Initialize collection if not exists
-                if (!sharedData[collection]) {
-                    sharedData[collection] = [];
-                }
-                
-                // Add timestamp and ID to data
-                data.timestamp = Date.now();
-                data.id = Date.now();
-                
-                // Add to collection
-                sharedData[collection].unshift(data);
-                
-                // Keep only last 20 items
-                sharedData[collection] = sharedData[collection].slice(0, 20);
-                
-                // Update timestamp and version
-                sharedData.timestamp = Date.now();
-                sharedData.version = (parseFloat(sharedData.version) || 1.0) + 0.1;
-                
-                // Save to JSONBin
-                const saveResponse = await fetch(CONFIG.DATA_SAVE_URL, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Master-Key': CONFIG.API_KEY
-                    },
-                    body: JSON.stringify(sharedData)
-                });
-                
-                if (saveResponse.ok) {
-                    console.log('Update pushed successfully');
-                    return true;
-                }
+                // Fallback: Save to local storage
+                this.saveToLocalFallback(collection, data);
+                return false;
             }
         } catch (error) {
             console.error('Push update error:', error);
+            
+            // Fallback: Save to local storage
+            this.saveToLocalFallback(collection, data);
+            return false;
         }
-        return false;
+    }
+    
+    saveToLocalFallback(collection, data) {
+        // Save to local storage
+        const key = `veerapura_${collection}`;
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.unshift(data);
+        localStorage.setItem(key, JSON.stringify(existing.slice(0, 50)));
+        
+        // Update UI immediately
+        this.updateUIImmediately(collection, data);
+        
+        console.log('📂 Saved to local storage (fallback)');
+        return true;
+    }
+    
+    updateUIImmediately(collection, data) {
+        switch(collection) {
+            case 'announcements':
+                const annEl = document.getElementById('announcement-text');
+                if (annEl && data.text) {
+                    annEl.textContent = data.text;
+                }
+                break;
+            case 'prices':
+                this.addNewPriceToTable(data);
+                break;
+        }
+    }
+    
+    addNewPriceToTable(priceData) {
+        const tbody = document.getElementById('prices-table-body');
+        if (tbody) {
+            const newRow = `
+                <tr class="new-update">
+                    <td><strong>${priceData.crop}</strong></td>
+                    <td><span class="price-value">${priceData.price}</span></td>
+                    <td>${priceData.market}</td>
+                    <td>
+                        <span class="trend-${priceData.trend || 'new'}">
+                            <i class="fas fa-${this.getTrendIcon(priceData.trend)}"></i>
+                            ${this.getTrendText(priceData.trend)}
+                        </span>
+                    </td>
+                    <td>${priceData.date}</td>
+                </tr>
+            `;
+            
+            if (tbody.children.length > 0) {
+                tbody.insertAdjacentHTML('afterbegin', newRow);
+            } else {
+                tbody.innerHTML = newRow;
+            }
+        }
     }
 }
 
