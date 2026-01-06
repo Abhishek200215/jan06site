@@ -1,4 +1,3 @@
-// Configuration for Veerapura Village
 const CONFIG = {
     // Basic configuration
     ADMIN_CODE: '123456',
@@ -6,11 +5,14 @@ const CONFIG = {
     DISTRICT: 'ಹಾವೇರಿ',
     STATE: 'ಕರ್ನಾಟಕ',
     
-    // Real-time configuration - Using JSONBin.io
-    UPDATE_CHECK_INTERVAL: 10000, // Check every 10 seconds
-    DATA_URL: 'https://api.jsonbin.io/v3/b/672c7a21ad19ca34f8b8d63e/latest',
-    DATA_SAVE_URL: 'https://api.jsonbin.io/v3/b/672c7a21ad19ca34f8b8d63e',
-    API_KEY: '$2a$10$4Y3K5r6S7T8U9V0W1X2Y3Z4a5b6c7d8e9f0g1h2i3j4k5l6m7n8o9p0q',
+    // Real-time configuration - Using GitHub Gist
+    UPDATE_CHECK_INTERVAL: 10000,
+    GIST_ID: 'b7750693ecabb3a1a5a6715fcf724291',
+    GIST_FILENAME: 'veerapura-data.json',
+    
+    // WARNING: Do NOT put GitHub token here in client-side code!
+    // It will be visible to everyone. Use a server instead.
+    GITHUB_TOKEN: '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', // Leave this empty for now
     
     // Voice commands
     VOICE_COMMANDS: {
@@ -29,3 +31,10 @@ const CONFIG = {
         'ಪ್ಲಂಬರ್': 'services'
     }
 };
+
+// GitHub Gist API URLs
+CONFIG.GIST_API_URL = `https://api.github.com/gists/${CONFIG.GIST_ID}`;
+CONFIG.GIST_RAW_URL = `https://gist.githubusercontent.com/abhishek200215/${CONFIG.GIST_ID}/raw/${CONFIG.GIST_FILENAME}`;
+
+// Make globally available
+window.CONFIG = CONFIG;
